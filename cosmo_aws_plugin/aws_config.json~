@@ -1,0 +1,20 @@
+{
+  "Amazon Credentials": {
+    "aws_access_key_id": "XXXXXXXXXXXXXXXXXXXXXX",
+    "aws_secret_access_key": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+    "region": "us-east-1",
+    "image_id": "ami-bba18dd2"
+    },
+
+ "instance": {
+    "image_id": "ami-59a4a230",
+    "instance_type":"t1.micro",
+    "user_data": "Aws-cosmo-instance",
+    "placement_group": "us-east-1",
+    "security_group" : "cloud-test",
+    "key_name" : "test.pem"
+   },
+ "userdata":{
+    "type": "t1.micro"
+   }
+}
