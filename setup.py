@@ -1,3 +1,4 @@
+
 from setuptools import setup
 
 COSMO_CELERY_VERSION = "0.3"
@@ -10,13 +11,15 @@ setup(
     zip_safe=True,
     name='cloudify-aws-plugin',
     version='0.1.0',
+    author='narenthirasamy',
+    author_email='naren@cloudenablers.com',
     packages=[
         'cosmo_aws_plugin'
     ],
     license='LICENSE',
     description='Cloudify plugin for Amazon Web Services Elastic Cloud Compute(EC2).',
     install_requires=[
-        "celery",
+        "cosmo-celery-common",
         "boto"
     ],
     dependency_links=["{0}#egg=cosmo-celery-common-{1}"
