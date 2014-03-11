@@ -1,0 +1,22 @@
+{
+  "Amazon Credentials": {
+    "aws_access_key_id": "Enter Your Access Key Here",
+    "aws_secret_access_key": "Enter Your Secret Access Key Here",
+    "region": "us-east-1",
+    "image_id": "ami-bba18dd2"
+    },
+
+ "instance": {
+    "instance_type":"t1.micro",
+    "user_data": "Aws-cosmo-instance",
+    "placement_group": "us-east-1",
+    "key_name" : "test.pem",
+    "security_groups":"test-security-group"
+   },
+ "userdata":{
+    "type": "t1.micro"
+}
+}
+
+
+
