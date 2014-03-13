@@ -77,7 +77,7 @@ class AWSEC2Test(common.TestCase):
         # WIP # cfy_srv.stop(ctx)
 
         # Test: delete
-        cfy_srv.delete(ctx,instance_id='i-8f5148ae')
+        cfy_srv.delete(ctx,instance_id='xxxxxxxx')
 
         #self.assertThereIsNoServer()
 
