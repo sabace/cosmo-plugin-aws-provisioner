@@ -66,9 +66,9 @@ class AWSEC2Test(common.TestCase):
         )
 
         # Test: create
-        ###self.assertThereIsNoServer(name=name)
-        #cfy_srv.start_new_instance(ctx,ec2_client)
-        ###self.assertThereIsOneServer(name=name)
+        self.assertThereIsNoServer(name=name)
+        cfy_srv.start_new_instance(ctx,ec2_client)
+        self.assertThereIsOneServer(name=name)
 
         # WIP # # Test: start
         # WIP # cfy_srv.start(ctx)
