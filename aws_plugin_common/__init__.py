@@ -12,9 +12,12 @@
 #  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  * See the License for the specific language governing permissions and
 #  * limitations under the License.
-
+import unittest
+import logging
+import string
 from functools import wraps
 import json
+import random
 import os
 
 import boto.ec2 as aws_client
@@ -75,10 +78,9 @@ class EC2Client(AwsClient):
 
     def connect(self, cfg):
         return aws_client.connect_to_region(
-            aws_access_key_id=cfg['aws_access_key'],
-            aws_secret_access_key=cfg['aws_secret_key'],
-            region_name=cfg['region'],
-            http_log_debug=False)
+            aws_access_key_id=cfg['Amazon Credentials']['aws_access_key_id'],
+            aws_secret_access_key=cfg['Amazon Credentials']['aws_secret_access_key'],
+            region_name=cfg['Amazon Credentials']['region'])
 
 
 # Decorators
@@ -110,4 +112,57 @@ def with_ec2_client(f):
         kw['ec2_client'] = ec2_client
         return f(*args, **kw)
     return wrapper
+
+#TestCases
+
+class TestCase(unittest.TestCase):
+
+    def get_ec2_client(self):
+        r = EC2Client().get()
+        self.get_ec2_client = lambda: r
+        return self.get_ec2_client()
+
+    def _mock_send_event(self, *args, **kw):
+        self.logger.debug("_mock_send_event(args={0}, kw={1})".format(
+            args, kw))
+
+    def _mock_get_node_state(self, __cloudify_id, *args, **kw):
+        self.logger.debug(
+            "_mock_get_node_state(__cloudify_id={0} args={1}, kw={2})".format(
+                __cloudify_id, args, kw))
+        return self.nodes_data[__cloudify_id]
+
+    def setUp(self):
+        # Careful!
+        logger = logging.getLogger(__name__)
+        logging.basicConfig(
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        self.logger = logger
+        self.logger.level = logging.DEBUG
+        self.logger.debug("Cosmo test setUp() called")
+        chars = string.ascii_uppercase + string.digits
+        self.name_prefix = 'cosmo_test_{0}_'\
+            .format(''.join(
+                random.choice(chars) for x in range(PREFIX_RANDOM_CHARS)))
+        self.timeout = 120
+
+        self.logger.debug("Cosmo test setUp() done")
+
+    @with_ec2_client
+    def assertThereIsOneServerAndGet(self, ec2_client, **kw):
+        instances = ec2_client.get_all_instances()
+        instances = [i for r in instances for i in r.instances]
+        self.assertEquals(1, len(instances[0].tags['Name']))
+        return instances[0].tags['Name']
+
+    assertThereIsOneServer = assertThereIsOneServerAndGet
+
+    @with_ec2_client
+    def assertThereIsNoServer(self, ec2_client, **kw):
+        tags = ec2_client.get_all_tags()
+        #instances = [i for r in tags for i in r.instances]
+        for tag in tags:
+            if tag.name == 'Name':
+                if tag.value == kw['name']:
+                    self.assertEquals(0, len(tag.value))
 

@@ -36,7 +36,7 @@ def start_new_instance(ctx, ec2_client):
     # For possible changes by _maybe_transform_userdata()
 
     instance = {
-        'name': ctx.node_id
+        'Name': ctx.node_id
     }
     instance.update(copy.deepcopy(ctx.properties['instance']))
 
@@ -45,15 +45,11 @@ def start_new_instance(ctx, ec2_client):
 
     _maybe_transform_userdata(instance)
 
-    # Sugar
-    if 'image_id' in instance:
-        instance['image_id'] = ec2_client.get_all_images(image_ids=instance['image_id'])
-        del instance['image_id']
 
-    _fail_on_missing_required_parameters(
-        instance,
-        ('instance_type', 'placement', 'user_data', 'key_name'),
-        'instance')
+    #_fail_on_missing_required_parameters(
+    #    instance,
+    #    ('image_id','instance_type', 'placement', 'user_data', 'key_name'),
+    #    'instance')
 
     ctx.logger.debug(
         "instance.run_instances() VM after transformations: {0}".format(instance))
@@ -64,6 +60,15 @@ def start_new_instance(ctx, ec2_client):
     params_default_values = inspect.getargspec(
         ec2_client.run_instances).defaults
     params = dict(itertools.izip(params_names, params_default_values))
+
+    # Sugar
+    if 'image_id' in instance:
+        instance['image_id'] = ec2_client.get_all_images(image_ids=instance['image_id'])
+        params['image_id'] =  instance['image_id'][0].id
+        del instance['image_id']
+
+    server_name = instance['Name']
+    del instance['Name']
 
     # Fail on unsupported parameters
     for k in instance:
@@ -76,21 +81,25 @@ def start_new_instance(ctx, ec2_client):
         if k in instance:
             params[k] = instance[k]
 
-    if not params['meta']:
-        params['meta'] = dict({})
-    params['meta'][NODE_ID_PROPERTY] = ctx.node_id
 
-    ctx.logger.info("Creating VM with parameters: {0}".format(str(params)))
+#    if not params['meta']:
+#        params['meta'] = dict({})
+#    params['meta'][NODE_ID_PROPERTY] = ctx.node_id
+
+    #ctx.logger.info("Creating VM with parameters: {0}".format(str(params)))
     ctx.logger.debug(
         "Asking EC2 to create Instance. All possible parameters are: {0})"
         .format(','.join(params.keys())))
-
     try:
         server = ec2_client.run_instances(**params)
 
         active_instance = _wait_for_server_to_become_active(ec2_client, server)
+        ##Assign name to server
+        ec2_client.create_tags([active_instance.id], {"Name": server_name})
 
-        ctx.logger.info("Creating VM with Parameters: {0}".format(str(active_instance)))
+        instance_details = _get_instance_status(ec2_client,active_instance.id)
+        ctx.logger.info("Created VM with Parameters {0}.".format(str(instance_details)))
+
     except Exception as e:
         raise RuntimeError("Boto bad request error: " + str(e))
     ctx[AWS_INSTANCE_ID_PROPERTY] = active_instance.id
@@ -138,7 +147,7 @@ def stop(ctx, ec2_client, **kwargs):
 
 @operation
 @with_ec2_client
-def terminate(ctx, ec2_client, **kwargs):
+def delete(ctx, ec2_client, **kwargs):
 
     #To Delete Instance
     _fail_on_missing_required_parameters(kwargs, ('instance_id',),
@@ -148,6 +157,7 @@ def terminate(ctx, ec2_client, **kwargs):
         kwargs['instance_id'])
     if instance_presence:
         ec2_client.terminate_instances(kwargs['instance_id'])
+        ctx.logger.info("Server Deleted from EC2")
     else:
         raise RuntimeError(
             "Cannot delete server - server doesn't exist for node: {0}"
@@ -272,25 +282,16 @@ def _get_instances_by_instance_id(ec2_client, instance_id):
                            .format(instance_id), instance_id)
 
 
-def _get_instance(ec2_client, instance_id):
-    ec2_client.get_all_instance(instance_ids=instance_id)
-    pass
-
-
 def _get_instance_status(ec2_client, instance_id):
     #Instance Status in AWS
     aws_reservations = ec2_client.get_all_instances()
     instances = [i for r in aws_reservations for i in r.instances]
     for i in instances:
-        if i == instance_id:
-            #print [{"status": i.update(), "host_name": i.tags["Name"],
-            #        "Ami Id": i.image_id, "Public IP": i.public_dns_name,
-            #        "Security_Group": i.key_name, "Private IP": i.ip_address,
-            #        "instance_id": instance_id}]
-            return [{"status": i.update(), "host_name": i.tags["Name"],
-                    "Ami Id": i.image_id, "Public IP": i.public_dns_name,
-                    "Security_Group": i.key_name, "Private IP": i.ip_address,
-                    "instance_id": instance_id}]
+        if i.id == instance_id:
+            return [{"Status": i.update(), "Host_name": i.tags["Name"],
+                    "Image Id": i.image_id, "Placement": i.placement,
+                    "Security_Group": i.key_name, "Public IP": i.ip_address,
+                    "Hardware id": instance_id, "Private IP": i.private_ip_address}]
 
 
 def _wait_for_server_to_become_active(ec2_client, server):
