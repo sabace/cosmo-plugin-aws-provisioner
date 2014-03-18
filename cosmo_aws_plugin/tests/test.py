@@ -25,11 +25,6 @@ import cosmo_aws_plugin.server as cfy_srv
 
 tests_config = common.TestsConfig().get()
 
-DELETE_WAIT_START = 1
-DELETE_WAIT_FACTOR = 2
-DELETE_WAIT_COUNT = 6
-
-
 # WIP - start
 # Maybe this chunk will not be needed as monitoring
 # will be done differently, probably as a (celery) task
@@ -47,37 +42,48 @@ class MockReporter(object):
 
 class AWSEC2Test(common.TestCase):
 
-    def test_server_create_and_delete(self):
+    def test_instance_create_and_delete(self):
 
         ec2_client = self.get_ec2_client()
-        name = self.name_prefix + 'srv_crt_del'
+        name = self.name_prefix + 'inst_crt_del'
+        tst_inst_cfg = tests_config['instance']
+        tst_sg_cfg = tests_config['security_group']
         ctx = MockCloudifyContext(
             node_id='__cloudify_id_' + name,
             properties={
                 'instance': {
                     'Name': name,
-                    'image_id' : tests_config['instance']['image_id'],
-                    'placement': tests_config['instance']['placement'],
-                    'user_data': tests_config['instance']['user_data'],
-                    'instance_type': tests_config['instance']['instance_type'],
-                    'key_name': tests_config['instance']['key_name'],
+                    'image_id': tst_inst_cfg['image_id'],
+                    'placement': tst_inst_cfg['placement'],
+                    'instance_type': tst_inst_cfg['instance_type'],
+                    'security_groups': tst_inst_cfg['security_groups'],
+                    'key_name': tst_inst_cfg['key_name']
+                },
+                'security_group': {
+                    'crt_sg_name': tst_sg_cfg['create']['crt_sg_name'],
+                    'description': tst_sg_cfg['create']['description'],
+                    'del_sg_name': tst_sg_cfg['delete']['del_sg_name'],
+                    'conf_sg_name': tst_sg_cfg['configure']['conf_sg_name'],
+                    'ip_protocol': tst_sg_cfg['configure']['ip_protocol'],
+                    "cidr_ip": tst_sg_cfg['configure']['cidr_ip'],
+                    "from_port": tst_sg_cfg['configure']['from_port'],
+                    "to_port": tst_sg_cfg['configure']['to_port']
                 },
             }
         )
 
         # Test: create
-        self.assertThereIsNoServer(name=name)
-        cfy_srv.start_new_instance(ctx,ec2_client)
-        self.assertThereIsOneServer(name=name)
+        #self.assertThereIsNoServer(name=name)
+        cfy_srv.launch_new_instance(ctx,ec2_client)
+        #cfy_srv.get_server_by_context(ec2_client,ctx)
+        #cfy_srv.create_security_group(ctx)
+        #cfy_srv.delete_security_group(ctx)
+        #cfy_srv.configure_security_group(ctx)
+        #self.assertThereIsOneServer(name=name)
 
-        # WIP # # Test: start
-        # WIP # cfy_srv.start(ctx)
-
-        # WIP # # Test: stop
-        # WIP # cfy_srv.stop(ctx)
-
-        # Test: delete
-        cfy_srv.delete(ctx,instance_id='xxxxxxxx')
+        #cfy_srv.start(ctx)
+        #cfy_srv.stop(ctx)
+        #cfy_srv.delete(ctx)
 
         #self.assertThereIsNoServer()
 

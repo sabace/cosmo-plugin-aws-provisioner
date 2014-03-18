@@ -18,16 +18,18 @@ import copy
 import inspect
 import itertools
 import aws_plugin_common
+from base64 import standard_b64decode
 
 from cloudify.decorators import operation
 
 with_ec2_client = aws_plugin_common.with_ec2_client
 
 NODE_ID_PROPERTY = 'cloudify_id'
-AWS_INSTANCE_ID_PROPERTY = 'aws_instance_id'
+AWS_SERVER_ID_PROPERTY = 'aws_instance_id'
+sec_group = {}
 
 
-def start_new_instance(ctx, ec2_client):
+def launch_new_instance(ctx, ec2_client):
     """
     Creates a instance. Exposes the parameters mentioned in
     http://boto.readthedocs.org/en/latest/ref/ec2.html#module-boto.ec2
@@ -43,14 +45,6 @@ def start_new_instance(ctx, ec2_client):
     ctx.logger.debug(
         "instance.run_instances() server before transformations: {0}".format(instance))
 
-    _maybe_transform_userdata(instance)
-
-
-    #_fail_on_missing_required_parameters(
-    #    instance,
-    #    ('image_id','instance_type', 'placement', 'user_data', 'key_name'),
-    #    'instance')
-
     ctx.logger.debug(
         "instance.run_instances() VM after transformations: {0}".format(instance))
 
@@ -64,10 +58,10 @@ def start_new_instance(ctx, ec2_client):
     # Sugar
     if 'image_id' in instance:
         instance['image_id'] = ec2_client.get_all_images(image_ids=instance['image_id'])
-        params['image_id'] =  instance['image_id'][0].id
+        params['image_id'] = instance['image_id'][0].id
         del instance['image_id']
 
-    server_name = instance['Name']
+    tag_name = instance['Name']
     del instance['Name']
 
     # Fail on unsupported parameters
@@ -81,12 +75,18 @@ def start_new_instance(ctx, ec2_client):
         if k in instance:
             params[k] = instance[k]
 
+    if not params['user_data']:
+        params['user_data'] = dict({})
+    params['user_data'][NODE_ID_PROPERTY] = ctx.node_id
+    params['user_data'] = params['user_data']['cloudify_id']
+    sg = []
+    security_group_presence = _get_security_group_by_name(ec2_client,
+                                                          instance['security_groups'])
+    if security_group_presence:
+        params['security_groups'] = sg.append(instance['security_groups'])
+    else:
+        params['security_groups'] = sg.append(create_security_group(ctx))
 
-#    if not params['meta']:
-#        params['meta'] = dict({})
-#    params['meta'][NODE_ID_PROPERTY] = ctx.node_id
-
-    #ctx.logger.info("Creating VM with parameters: {0}".format(str(params)))
     ctx.logger.debug(
         "Asking EC2 to create Instance. All possible parameters are: {0})"
         .format(','.join(params.keys())))
@@ -95,170 +95,168 @@ def start_new_instance(ctx, ec2_client):
 
         active_instance = _wait_for_server_to_become_active(ec2_client, server)
         ##Assign name to server
-        ec2_client.create_tags([active_instance.id], {"Name": server_name})
+        ec2_client.create_tags([active_instance.id], {"Name": tag_name})
 
-        instance_details = _get_instance_status(ec2_client,active_instance.id)
+        instance_details = _get_instance_status(ec2_client, active_instance.id)
         ctx.logger.info("Created VM with Parameters {0}.".format(str(instance_details)))
 
     except Exception as e:
         raise RuntimeError("Boto bad request error: " + str(e))
-    ctx[AWS_INSTANCE_ID_PROPERTY] = active_instance.id
+    ctx[AWS_SERVER_ID_PROPERTY] = active_instance.id
+    ctx.update()
 
 
 @operation
 @with_ec2_client
 def start(ctx, ec2_client, **kwargs):
+    """
+    Start instance.
 
-    #Start an Instance if it's stopped
-    _fail_on_missing_required_parameters(kwargs, ('instance_id',),
-                                         'User parameters')
-    instance_presence = _get_instances_by_instance_id(
-        ec2_client,
-        kwargs['instance_id'])
-    if instance_presence:
-        ec2_client.start_instances(kwargs['instance_id'])
-        instance_state = _get_instance_status(ec2_client,kwargs['instance_id'])
-        ctx.logger.info ("VM Details ".format(str(instance_state)))
-    else:
-        raise RuntimeError(
-            "Cannot start server - server doesn't exist for node: {0}"
-            .format(ctx.node_id))
+    Depends on AWS implementation
+    """
+    instance = get_server_by_context(ec2_client, ctx)
+    if instance is not None:
+        ec2_client.start_instances(instance)
+        return
+
+    launch_new_instance(ctx, ec2_client)
 
 
 @operation
 @with_ec2_client
 def stop(ctx, ec2_client, **kwargs):
+    """
+    Stop Instance.
 
-    #To Stop an Instance if it's running state
-    _fail_on_missing_required_parameters(kwargs, ('instance_id',),
-                                         'User parameters')
-    instance_presence = _get_instances_by_instance_id(
-        ec2_client,
-        kwargs['instance_id'])
-    if instance_presence:
-        ec2_client.stop_instances(kwargs['instance_id'])
-        instance_state = _get_instance_status(ec2_client,kwargs['instance_id'])
-        ctx.logger.info ("VM Details ".format(str(instance_state)))
+    Depends on AWS implementation
+    """
+    instance = get_server_by_context(ec2_client, ctx)
+    instance_state = _get_instance_status(ec2_client, instance)
+    if instance_state[0]['Status'] is "running":
+        ec2_client.stop_instances(instance)
     else:
         raise RuntimeError(
-            "Cannot stop server - server doesn't exist for node: {0}"
+            "Cannot stop instance - server doesn't exist for node: {0}"
             .format(ctx.node_id))
 
 
 @operation
 @with_ec2_client
 def delete(ctx, ec2_client, **kwargs):
+    """
+    Terminates Instance in ctx.
 
-    #To Delete Instance
-    _fail_on_missing_required_parameters(kwargs, ('instance_id',),
-                                         'User parameters')
-    instance_presence = _get_instances_by_instance_id(
-        ec2_client,
-        kwargs['instance_id'])
-    if instance_presence:
-        ec2_client.terminate_instances(kwargs['instance_id'])
-        ctx.logger.info("Server Deleted from EC2")
+    Depends on AWS implementation
+    """
+    instance = get_server_by_context(ec2_client, ctx)
+    instance_state = _get_instance_status(ec2_client, instance)
+    if instance_state[0]['Status'] is "running" or \
+            instance[0]['Status'] is "stopped":
+        ec2_client.terminate_instances(instance)
     else:
         raise RuntimeError(
             "Cannot delete server - server doesn't exist for node: {0}"
             .format(ctx.node_id))
 
 
+def get_server_by_context(ec2_client, ctx):
+    """
+    Gets a instance for the provided context.
+
+    If aws instance id is present it would be used for getting the server.
+    Otherwise, an iteration on all servers userdata will be made.
+    """
+    # Getting instance by its AWS instance id is faster tho it requires
+    # a REST API call to Cloudify's storage for getting runtime properties.
+    if AWS_SERVER_ID_PROPERTY in ctx:
+        reservations = ec2_client.get_all_instances(instance_ids=ctx[AWS_SERVER_ID_PROPERTY])
+        instances = [i for r in reservations for i in r.instances]
+        return instances[0].id
+    # Fallback
+    reservations = ec2_client.get_all_instances()
+    instances = [i for r in reservations for i in r.instances]
+    for instance in instances:
+        usr_data = ec2_client.get_instance_attribute(instance.id, 'userData')
+        if usr_data['userData'] is not None:
+            encoded_userdata = standard_b64decode(usr_data['userData'])
+            if NODE_ID_PROPERTY in encoded_userdata:
+                return instance.id
+    return None
+
+
 @operation
 @with_ec2_client
 def create_security_group(ctx, ec2_client, **kwargs):
 
-    #To Create Security Group
-    _fail_on_missing_required_parameters(kwargs, ('name', 'description', ),
-                                         'User parameters')
+    #Creates Security Group
+    sec_group.update(copy.deepcopy(ctx.properties['security_group']))
     security_group_presence = _get_security_group_by_name(ec2_client,
-                                                          kwargs['name'])
+                                                          sec_group['crt_sg_name'])
     if security_group_presence:
         raise RuntimeError("Security Group name '{0}' is already Used."
-                           .format(kwargs['name']))
+                           .format(sec_group['crt_sg_name']))
     else:
-        security_group = ec2_client.create_security_group(
-            kwargs['name'],
-            kwargs['description'])
-        ctx.logger.info("Creating Security Group with Parameters: {0}".format(str(security_group)))
-        return security_group
+        sg_create = ec2_client.create_security_group(
+            sec_group['crt_sg_name'],
+            sec_group['description'])
+        ctx.logger.info("Creating Security Group with Parameters: {0}".format(str(sg_create)))
+        return str(sg_create.name)
 
 
 @operation
 @with_ec2_client
 def delete_security_group(ctx, ec2_client, **kwargs):
 
-    #To delete Security Group
-    _fail_on_missing_required_parameters(kwargs, ('name', 'group_id', ),
-                                         'User parameters')
+    #Deletes Security Group
+    sec_group.update(copy.deepcopy(ctx.properties['security_group']))
     security_group_presence = _get_security_group_by_name(
         ec2_client,
-        kwargs['name'])
+        sec_group['del_sg_name'])
     if security_group_presence:
-        deleted_security_group = ec2_client.delete_security_group(
-            name=kwargs['name'],
-            group_id=kwargs['group_id'])
-        return deleted_security_group
+        try:
+            ec2_client.delete_security_group(
+                name=security_group_presence[0]['name'],
+                group_id=security_group_presence[0]['id'])
+            ctx.logger.info("Security group Deleted")
+        except Exception as e:
+            raise RuntimeError("Boto bad request error: " + str(e))
     else:
         raise RuntimeError(
             "Cannot delete Security Group - Security Group doesn't exist for node: {0}"
-            .format(ctx.node_id))
+            .format(sec_group['del_sg_name']))
 
 
 @operation
 @with_ec2_client
 def configure_security_group(ctx, ec2_client, **kwargs):
 
-    #To Add rules to existing Security Group
-    _fail_on_missing_required_parameters(kwargs, ('name',
-                                                  'source_group_id',
-                                                  'ip_protocol',
-                                                  'cidr_ip',
-                                                  'from_port',
-                                                  'to_port', ),
-                                         'User parameters')
+    #Add rules to existing Security Group
+    sec_group.update(copy.deepcopy(ctx.properties['security_group']))
+    print sec_group
+    _fail_on_missing_required_parameters(sec_group, ('conf_sg_name',
+                                                     'ip_protocol',
+                                                     'cidr_ip',
+                                                     'from_port',
+                                                     'to_port', ),
+                                         'security_groups.configure')
     security_group_presence = _get_security_group_by_name(ec2_client,
-                                                          kwargs['name'])
+                                                          sec_group['conf_sg_name'])
     if security_group_presence:
-        security_group = ec2_client.authorize_security_group(
-            group_name=kwargs["name"],
-            src_security_group_group_id=kwargs["source_group_id"],
-            ip_protocol=kwargs['ip_protocol'],
-            cidr_ip=kwargs['cidr_ip'],
-            from_port=kwargs['from_port'],
-            to_port=kwargs['to_port'])
-        return security_group
+        try:
+            security_group = ec2_client.authorize_security_group(
+                group_name=security_group_presence[0]['name'],
+                src_security_group_group_id=security_group_presence[0]['id'],
+                ip_protocol=sec_group['ip_protocol'],
+                cidr_ip=sec_group['cidr_ip'],
+                from_port=sec_group['from_port'],
+                to_port=sec_group['to_port'])
+            ctx.logger.info("Rules added to the Security group ")
+        except Exception as e:
+            raise RuntimeError("Boto bad request error: " + str(e))
     else:
         raise RuntimeError(
             "Unable to Add rules to the Group - Security Group doesn't exist for node: {0}"
-            .format(ctx.node_id))
-
-
-@operation
-@with_ec2_client
-def reconfigure_security_group(ctx, ec2_client, **kwargs):
-
-    #To Delete rules in existing Security Group
-    _fail_on_missing_required_parameters(kwargs, ('name',
-                                                  'source_group_id',
-                                                  'ip_protocol',
-                                                  'cidr_ip', ),
-                                         'User parameters')
-    check_security_group = _get_security_group_by_name(ec2_client,
-                                                       kwargs['name'])
-    if kwargs['name'] not in check_security_group:
-        modify_security_group_rule = ec2_client.revoke_security_group(
-            group_name=kwargs["name"],
-            src_security_group_group_id=kwargs["source_group_id"],
-            ip_protocol=kwargs['ip_protocol'],
-            cidr_ip=kwargs['cidr_ip'],
-            from_port=kwargs['from_port'],
-            to_port=kwargs['to_port'])
-        return modify_security_group_rule
-    else:
-        raise RuntimeError(
-            "Unable to Delete Rule - Rule doesn't exist for node: {0}"
-            .format(ctx.node_id))
+            .format(sec_group['conf_sg_name']))
 
 
 def _get_security_group_by_name(ec2_client, name):
@@ -266,20 +264,7 @@ def _get_security_group_by_name(ec2_client, name):
     security_groups = ec2_client.get_all_security_groups(groupnames=None,
                                                          group_ids=None,
                                                          filters=None)
-    return [{'name': sg.name} for sg in security_groups if sg.name == name]
-
-
-def _get_instances_by_instance_id(ec2_client, instance_id):
-    #Return Instance ID is present in AWS EC2
-    reservations = ec2_client.get_all_instances()
-    instances = [i for r in reservations for i in r.instances]
-    for instance in instances:
-        if instance.id == instance_id:
-            return instance
-    else:
-        raise RuntimeError("Lookup of instances by id failed."
-                           " There are {0} instances named '{1}'"
-                           .format(instance_id), instance_id)
+    return [{'id': sg.id, "name": sg.name} for sg in security_groups if sg.name == name]
 
 
 def _get_instance_status(ec2_client, instance_id):
@@ -290,20 +275,20 @@ def _get_instance_status(ec2_client, instance_id):
         if i.id == instance_id:
             return [{"Status": i.update(), "Host_name": i.tags["Name"],
                     "Image Id": i.image_id, "Placement": i.placement,
-                    "Security_Group": i.key_name, "Public IP": i.ip_address,
+                    "Key_Name": i.key_name, "Public IP": i.ip_address,
                     "Hardware id": instance_id, "Private IP": i.private_ip_address}]
 
 
-def _wait_for_server_to_become_active(ec2_client, server):
+def _wait_for_server_to_become_active(ec2_client, instance):
     timeout = 100
-    while server.instances[0].state != "running":
+    while instance.instances[0].state != "running":
         timeout -= 5
         if timeout <= 0:
             raise RuntimeError('Server failed to start in time')
         time.sleep(5)
-        server = ec2_client.get_all_instances(instance_ids=str(server.instances[0].id))[0]
+        instance = ec2_client.get_all_instances(instance_ids=str(instance.instances[0].id))[0]
 
-    return server.instances[0]
+    return instance.instances[0]
 
 
 def _fail_on_missing_required_parameters(obj, required_parameters, hint_where):
@@ -314,36 +299,3 @@ def _fail_on_missing_required_parameters(obj, required_parameters, hint_where):
                 "properties.{1}). Required parameters are: {2}"
                 .format(k, hint_where, required_parameters))
 
-
-# *** userdata handling - start ***
-userdata_handlers = {}
-
-
-def userdata_handler(type_):
-    def f(x):
-        userdata_handlers[type_] = x
-        return x
-    return f
-
-
-def _maybe_transform_userdata(nova_config_instance):
-    """Allows userdata to be read from a file, etc, not just be a string"""
-    if 'userdata' not in nova_config_instance:
-        return
-    if not isinstance(nova_config_instance['userdata'], dict):
-        return
-    ud = nova_config_instance['userdata']
-
-    _fail_on_missing_required_parameters(
-        ud,
-        ('type',),
-        'server.userdata')
-
-    if ud['type'] not in userdata_handlers:
-        raise ValueError("Invalid type '{0}' (under host's "
-                         "properties.nova_config.instance.userdata)"
-                         .format(ud['type']))
-
-    nova_config_instance['userdata'] = userdata_handlers[ud['type']](ud)
-
-# *** userdata handling - end ***
