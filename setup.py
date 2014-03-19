@@ -14,7 +14,7 @@ setup(
     author='narenthirasamy',
     author_email='naren@cloudenablers.com',
     packages=[
-        'cosmo_aws_plugin',
+        'aws_plugin_common',
 	'ec2_plugin'
     ],
     license='LICENSE',
