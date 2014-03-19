@@ -1,0 +1,32 @@
+{
+    "Amazon Credentials": {
+        "aws_access_key_id": "Enter Your Access Key Here",
+        "aws_secret_access_key": "Enter Your Secret Access Key Here",
+        "region": "us-east-1",
+        "image_id": "ami-bba18dd2"
+    },
+    "instance": {
+        "image_id": "ami-bba18dd2",
+        "name": "cosmo-aws-instance",
+        "instance_type": "t1.micro",
+        "security_groups": "cosmo-test1",
+        "placement": "us-east-1c",
+        "key_name": "test"
+    },
+    "security_group": {
+        "create": {
+            "crt_sg_name": "cosmo-test13",
+            "description": "Test Security Group"
+        },
+        "delete": {
+            "del_sg_name": "test-cosmo-2"
+        },
+        "configure": {
+            "conf_sg_name": "test-cosmo-2",
+            "ip_protocol": "tcp",
+            "cidr_ip": "0.0.0.0/0",
+            "from_port": "6500",
+            "to_port": "6503"
+        }
+    }
+}
