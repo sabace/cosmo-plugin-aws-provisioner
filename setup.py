@@ -14,7 +14,8 @@ setup(
     author='narenthirasamy',
     author_email='naren@cloudenablers.com',
     packages=[
-        'cosmo_aws_plugin'
+        'cosmo_aws_plugin',
+	'aws_plugin_common'
     ],
     license='LICENSE',
     description='Cloudify plugin for Amazon Web Services Elastic Cloud Compute(EC2).',
