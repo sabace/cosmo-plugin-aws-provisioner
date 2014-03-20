@@ -177,6 +177,19 @@ def get_server_by_context(ec2_client, ctx):
             if NODE_ID_PROPERTY in encoded_userdata:
                 return instance.id
     return None
+    
+
+@operation
+@with_ec2_client
+def get_state(ctx, ec2_client, **kwargs):
+    instance = get_server_by_context(ec2_client, ctx)
+    instance_state = _get_instance_status(ec2_client, instance)
+    if instance_state[0]['Status'] is "running":
+        ctx['ip'] = instance_state[0]['Public IP']
+        # The ip of this instance in the management network
+        ctx.logger.info("Instance id").format(str(instance_state[0]['Public IP']))
+        return True
+    return False
 
 
 @operation
