@@ -114,11 +114,6 @@ def launch_new_instance(ctx, ec2_client):
 @operation
 @with_ec2_client
 def start(ctx, ec2_client, **kwargs):
-    """
-    Start instance.
-
-    Depends on AWS implementation
-    """
     instance = get_server_by_context(ec2_client, ctx)
     if instance is not None:
         ec2_client.start_instances(instance)
@@ -148,11 +143,6 @@ def stop(ctx, ec2_client, **kwargs):
 @operation
 @with_ec2_client
 def delete(ctx, ec2_client, **kwargs):
-    """
-    Terminates Instance in ctx.
-
-    Depends on AWS implementation
-    """
     instance = get_server_by_context(ec2_client, ctx)
     instance_state = _get_instance_status(ec2_client, instance)
     if instance_state[0]['Status'] is "running" or \
