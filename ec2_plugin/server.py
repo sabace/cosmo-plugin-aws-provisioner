@@ -26,6 +26,7 @@ with_ec2_client = aws_plugin_common.with_ec2_client
 
 NODE_ID_PROPERTY = 'cloudify_id'
 AWS_SERVER_ID_PROPERTY = 'aws_instance_id'
+AWS_SERVER_DETAILS = 'runtime_info'
 sec_group = {}
 
 
@@ -108,6 +109,7 @@ def launch_new_instance(ctx, ec2_client):
     except Exception as e:
         raise RuntimeError("Boto bad request error: " + str(e))
     ctx[AWS_SERVER_ID_PROPERTY] = active_instance.id
+    ctx[AWS_SERVER_DETAILS] = instance_details
     ctx.update()
 
 
