@@ -60,7 +60,7 @@ def start_new_server(ctx, ec2_client):
 
     tag_name = server['name']
     del server['name']
-    
+
     _fail_on_missing_required_parameters(
         server,
         ('name', 'image_id', 'instance_type','security_groups',
@@ -77,7 +77,7 @@ def start_new_server(ctx, ec2_client):
     for k in params:
         if k in server:
             params[k] = server[k]
-            
+
 
     security_group_presence = _get_security_group_by_name(ec2_client,
                                                           server['security_groups'])
@@ -99,13 +99,13 @@ def start_new_server(ctx, ec2_client):
         active_server = _wait_for_server_to_become_active(ec2_client, s)
         ##Assign name to server
         ec2_client.create_tags([active_server.id], {"Name": tag_name})
-        
+
         meta_data = dict({})
         meta_data[NODE_ID_PROPERTY] = ctx.node_id
         meta_data = meta_data['cloudify_id']
         ec2_client.create_tags([active_server.id], {"meta_data": meta_data})
 
-        server_details = _get_instance_status(ec2_client, active_server.id)
+        server_details = _get_server_status(ec2_client, active_server.id)
         ctx.logger.info("Created VM with Parameters {0} Security_Group {1}."
                         .format(str(server_details),
                                 params['security_groups']))
@@ -134,11 +134,11 @@ def stop(ctx, ec2_client, **kwargs):
     """
     Stop Instance.
 
-    "Depends on AWS AMI Selected for operation, 
+    "Depends on AWS AMI Selected for operation,
     for Instance stored backed AMI  server.stop not supported"
     """
     server = get_server_by_context(ec2_client, ctx)
-    server_state = _get_instance_status(ec2_client, server)
+    server_state = _get_server_status(ec2_client, server)
     if server_state[0]['Status'] is "running":
         ec2_client.stop_instances(server)
     else:
@@ -151,7 +151,7 @@ def stop(ctx, ec2_client, **kwargs):
 @with_ec2_client
 def delete(ctx, ec2_client, **kwargs):
     server = get_server_by_context(ec2_client, ctx)
-    server_state = _get_instance_status(ec2_client, server)
+    server_state = _get_server_status(ec2_client, server)
     if server_state[0]['Status'] is "running" or \
             server_state[0]['Status'] is "stopped":
         ec2_client.terminate_instances(server)
@@ -176,20 +176,20 @@ def get_server_by_context(ec2_client, ctx):
         return servers[0].id
     # Fallback
     reservations = ec2_client.get_all_instances()
-    servers = [{'tags':i.tags['meta_data'], 'instance_id':i.id} for r in reservations 
+    servers = [{'tags':i.tags['meta_data'], 'instance_id':i.id} for r in reservations
            for i in r.instances if i.tags if i.tags.get('meta_data') == NODE_ID_PROPERTY]
-    
+
     for server in servers:
         return server['instance_id']
-    
+
     return None
-    
+
 
 @operation
 @with_ec2_client
 def get_state(ctx, ec2_client, **kwargs):
     server = get_server_by_context(ec2_client, ctx)
-    server_state = _get_instance_status(ec2_client, server)
+    server_state = _get_server_status(ec2_client, server)
     if server_state[0]['Status'] is "running":
         ctx['ip'] = server_state[0]['Public IP']
         # The ip of this instance in the management network
@@ -289,7 +289,7 @@ def _get_server_status(ec2_client, server_id):
             return [{"Status": i.update(), "Host_name": i.tags["Name"],
                     "Image Id": i.image_id, "Placement": i.placement,
                     "Key_Name": i.key_name, "Public IP": i.ip_address,
-                    "Hardware id": instance_id, "Private IP": i.private_ip_address}]
+                    "Hardware id": server_id, "Private IP": i.private_ip_address}]
 
 
 def _wait_for_server_to_become_active(ec2_client, server):
