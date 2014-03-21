@@ -77,11 +77,8 @@ def start_new_server(ctx, ec2_client):
     for k in params:
         if k in server:
             params[k] = server[k]
+            
 
-    if not params['user_data']:
-        params['user_data'] = dict({})
-    params['user_data'][NODE_ID_PROPERTY] = ctx.node_id
-    params['user_data'] = params['user_data']['cloudify_id']
     security_group_presence = _get_security_group_by_name(ec2_client,
                                                           server['security_groups'])
 
@@ -102,6 +99,11 @@ def start_new_server(ctx, ec2_client):
         active_server = _wait_for_server_to_become_active(ec2_client, s)
         ##Assign name to server
         ec2_client.create_tags([active_server.id], {"Name": tag_name})
+        
+        meta_data = dict({})
+        meta_data[NODE_ID_PROPERTY] = ctx.node_id
+        meta_data = meta_data['cloudify_id']
+        ec2_client.create_tags([active_server.id], {"meta_data": meta_data})
 
         server_details = _get_instance_status(ec2_client, active_server.id)
         ctx.logger.info("Created VM with Parameters {0} Security_Group {1}."
@@ -174,13 +176,12 @@ def get_server_by_context(ec2_client, ctx):
         return servers[0].id
     # Fallback
     reservations = ec2_client.get_all_instances()
-    servers = [i for r in reservations for i in r.instances]
+    servers = [{'tags':i.tags['meta_data'], 'instance_id':i.id} for r in reservations 
+           for i in r.instances if i.tags if i.tags.get('meta_data') == NODE_ID_PROPERTY]
+    
     for server in servers:
-        usr_data = ec2_client.get_instance_attribute(server.id, 'userData')
-        if usr_data['userData'] is not None:
-            encoded_userdata = standard_b64decode(usr_data['userData'])
-            if NODE_ID_PROPERTY in encoded_userdata:
-                return server.id
+        return server['instance_id']
+    
     return None
     
 
@@ -247,7 +248,6 @@ def configure_security_group(ctx, ec2_client, **kwargs):
 
     #Add rules to existing Security Group
     sec_group.update(copy.deepcopy(ctx.properties['security_group']))
-    print sec_group
     _fail_on_missing_required_parameters(sec_group, ('conf_sg_name',
                                                      'ip_protocol',
                                                      'cidr_ip',
@@ -282,28 +282,28 @@ def _get_security_group_by_name(ec2_client, name):
     return [{'id': sg.id, "name": sg.name} for sg in security_groups if sg.name == name]
 
 
-def _get_instance_status(ec2_client, instance_id):
+def _get_server_status(ec2_client, server_id):
     #Instance Status in AWS
     aws_reservations = ec2_client.get_all_instances()
-    instances = [i for r in aws_reservations for i in r.instances]
-    for i in instances:
-        if i.id == instance_id:
+    servers = [i for r in aws_reservations for i in r.instances]
+    for i in servers:
+        if i.id == server_id:
             return [{"Status": i.update(), "Host_name": i.tags["Name"],
                     "Image Id": i.image_id, "Placement": i.placement,
                     "Key_Name": i.key_name, "Public IP": i.ip_address,
                     "Hardware id": instance_id, "Private IP": i.private_ip_address}]
 
 
-def _wait_for_server_to_become_active(ec2_client, instance):
+def _wait_for_server_to_become_active(ec2_client, server):
     timeout = 100
-    while instance.instances[0].state != "running":
+    while server.instances[0].state != "running":
         timeout -= 5
         if timeout <= 0:
             raise RuntimeError('Server failed to start in time')
         time.sleep(5)
-        instance = ec2_client.get_all_instances(instance_ids=str(instance.instances[0].id))[0]
+        server = ec2_client.get_all_instances(instance_ids=str(server.instances[0].id))[0]
 
-    return instance.instances[0]
+    return server.instances[0]
 
 
 def _fail_on_missing_required_parameters(obj, required_parameters, hint_where):
