@@ -18,8 +18,8 @@ import copy
 import inspect
 import itertools
 import aws_plugin_common
-from base64 import standard_b64decode
 
+from base64 import standard_b64decode
 from cloudify.decorators import operation
 
 with_ec2_client = aws_plugin_common.with_ec2_client
@@ -30,24 +30,20 @@ AWS_SERVER_DETAILS = 'runtime_info'
 sec_group = {}
 
 
-def launch_new_instance(ctx, ec2_client):
+def start_new_server(ctx, ec2_client):
     """
     Creates a instance. Exposes the parameters mentioned in
     http://boto.readthedocs.org/en/latest/ref/ec2.html#module-boto.ec2
     run_instances class
     """
-    # For possible changes by _maybe_transform_userdata()
 
-    instance = {
-        'Name': ctx.node_id
+    server = {
+        'name': ctx.node_id
     }
-    instance.update(copy.deepcopy(ctx.properties['instance']))
+    server.update(copy.deepcopy(ctx.properties['server']))
 
     ctx.logger.debug(
-        "instance.run_instances() server before transformations: {0}".format(instance))
-
-    ctx.logger.debug(
-        "instance.run_instances() VM after transformations: {0}".format(instance))
+        "instance.run_instances() server before transformations: {0}".format(server))
 
     # First parameter is 'self', skipping
     params_names = inspect.getargspec(ec2_client.run_instances).args[2:]
@@ -57,71 +53,77 @@ def launch_new_instance(ctx, ec2_client):
     params = dict(itertools.izip(params_names, params_default_values))
 
     # Sugar
-    if 'image_id' in instance:
-        instance['image_id'] = ec2_client.get_all_images(image_ids=instance['image_id'])
-        params['image_id'] = instance['image_id'][0].id
-        del instance['image_id']
+    if 'image_id' in server:
+        server['image_id'] = ec2_client.get_all_images(image_ids=server['image_id'])
+        params['image_id'] = server['image_id'][0].id
+        del server['image_id']
 
-    tag_name = instance['Name']
-    del instance['Name']
+    tag_name = server['name']
+    del server['name']
+    
+    _fail_on_missing_required_parameters(
+        server,
+        ('name', 'image_id', 'instance_type','security_groups',
+        'placement','key_name'),
+        'server')
 
     # Fail on unsupported parameters
-    for k in instance:
+    for k in server:
         if k not in params:
             raise ValueError("Parameter with name '{0}' must not be passed to"
                              " AWS provisioner (under host's "
                              "properties.ec2.instance)".format(k))
 
     for k in params:
-        if k in instance:
-            params[k] = instance[k]
+        if k in server:
+            params[k] = server[k]
 
     if not params['user_data']:
         params['user_data'] = dict({})
     params['user_data'][NODE_ID_PROPERTY] = ctx.node_id
     params['user_data'] = params['user_data']['cloudify_id']
     security_group_presence = _get_security_group_by_name(ec2_client,
-                                                          instance['security_groups'])
+                                                          server['security_groups'])
 
-    sg = []
-    if security_group_presence[0]['name'] == instance['security_groups']:
-        sg.append(instance['security_groups'])
-        params['security_groups'] = sg
+    securitygroup = []
+    if security_group_presence[0]['name'] == server['security_groups']:
+        securitygroup.append(server['security_groups'])
+        params['security_groups'] = securitygroup
     else:
-        sg.append(create_security_group(ctx))
-        params['security_groups'] = sg
+        securitygroup.append(create_security_group(ctx))
+        params['security_groups'] = securitygroup
 
     ctx.logger.debug(
-        "Asking EC2 to create Instance. All possible parameters are: {0})"
+        "Asking EC2 to create Server. All possible parameters are: {0})"
         .format(','.join(params.keys())))
     try:
-        server = ec2_client.run_instances(**params)
+        s = ec2_client.run_instances(**params)
 
-        active_instance = _wait_for_server_to_become_active(ec2_client, server)
+        active_server = _wait_for_server_to_become_active(ec2_client, s)
         ##Assign name to server
-        ec2_client.create_tags([active_instance.id], {"Name": tag_name})
+        ec2_client.create_tags([active_server.id], {"Name": tag_name})
 
-        instance_details = _get_instance_status(ec2_client, active_instance.id)
+        server_details = _get_instance_status(ec2_client, active_server.id)
         ctx.logger.info("Created VM with Parameters {0} Security_Group {1}."
-                        .format(str(instance_details),
+                        .format(str(server_details),
                                 params['security_groups']))
 
     except Exception as e:
         raise RuntimeError("Boto bad request error: " + str(e))
-    ctx[AWS_SERVER_ID_PROPERTY] = active_instance.id
-    ctx[AWS_SERVER_DETAILS] = instance_details
+    ctx[AWS_SERVER_ID_PROPERTY] = active_server.id
+    ctx[AWS_SERVER_DETAILS] = server_details
     ctx.update()
 
 
 @operation
 @with_ec2_client
 def start(ctx, ec2_client, **kwargs):
-    instance = get_server_by_context(ec2_client, ctx)
-    if instance is not None:
-        ec2_client.start_instances(instance)
+    server = get_server_by_context(ec2_client, ctx)
+    if server is not None:
+        ec2_client.start_instances(server)
         return
 
-    launch_new_instance(ctx, ec2_client)
+    start_new_server(ctx, ec2_client)
 
 
 @operation
@@ -130,26 +132,27 @@ def stop(ctx, ec2_client, **kwargs):
     """
     Stop Instance.
 
-    Depends on AWS implementation
+    "Depends on AWS AMI Selected for operation, 
+    for Instance stored backed AMI  server.stop not supported"
     """
-    instance = get_server_by_context(ec2_client, ctx)
-    instance_state = _get_instance_status(ec2_client, instance)
-    if instance_state[0]['Status'] is "running":
-        ec2_client.stop_instances(instance)
+    server = get_server_by_context(ec2_client, ctx)
+    server_state = _get_instance_status(ec2_client, server)
+    if server_state[0]['Status'] is "running":
+        ec2_client.stop_instances(server)
     else:
         raise RuntimeError(
-            "Cannot stop instance - server doesn't exist for node: {0}"
+            "Cannot stop server - server doesn't exist for node: {0}"
             .format(ctx.node_id))
 
 
 @operation
 @with_ec2_client
 def delete(ctx, ec2_client, **kwargs):
-    instance = get_server_by_context(ec2_client, ctx)
-    instance_state = _get_instance_status(ec2_client, instance)
-    if instance_state[0]['Status'] is "running" or \
-            instance[0]['Status'] is "stopped":
-        ec2_client.terminate_instances(instance)
+    server = get_server_by_context(ec2_client, ctx)
+    server_state = _get_instance_status(ec2_client, server)
+    if server_state[0]['Status'] is "running" or \
+            server_state[0]['Status'] is "stopped":
+        ec2_client.terminate_instances(server)
     else:
         raise RuntimeError(
             "Cannot delete server - server doesn't exist for node: {0}"
@@ -167,29 +170,31 @@ def get_server_by_context(ec2_client, ctx):
     # a REST API call to Cloudify's storage for getting runtime properties.
     if AWS_SERVER_ID_PROPERTY in ctx:
         reservations = ec2_client.get_all_instances(instance_ids=ctx[AWS_SERVER_ID_PROPERTY])
-        instances = [i for r in reservations for i in r.instances]
-        return instances[0].id
+        servers = [i for r in reservations for i in r.instances]
+        return servers[0].id
     # Fallback
     reservations = ec2_client.get_all_instances()
-    instances = [i for r in reservations for i in r.instances]
-    for instance in instances:
-        usr_data = ec2_client.get_instance_attribute(instance.id, 'userData')
+    servers = [i for r in reservations for i in r.instances]
+    for server in servers:
+        usr_data = ec2_client.get_instance_attribute(server.id, 'userData')
         if usr_data['userData'] is not None:
             encoded_userdata = standard_b64decode(usr_data['userData'])
             if NODE_ID_PROPERTY in encoded_userdata:
-                return instance.id
+                return server.id
     return None
     
 
 @operation
 @with_ec2_client
 def get_state(ctx, ec2_client, **kwargs):
-    instance = get_server_by_context(ec2_client, ctx)
-    instance_state = _get_instance_status(ec2_client, instance)
-    if instance_state[0]['Status'] is "running":
-        ctx['ip'] = instance_state[0]['Public IP']
+    server = get_server_by_context(ec2_client, ctx)
+    server_state = _get_instance_status(ec2_client, server)
+    if server_state[0]['Status'] is "running":
+        IP = []
+        IP.append(server_state[0]['Public IP'])
+        ctx['ip'].append(IP)
         # The ip of this instance in the management network
-        ctx.logger.info("Instance id").format(str(instance_state[0]['Public IP']))
+        ctx.logger.info("Instance id").format(str(server_state[0]['Public IP']))
         return True
     return False
 
