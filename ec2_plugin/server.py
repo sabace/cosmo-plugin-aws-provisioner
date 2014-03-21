@@ -191,9 +191,7 @@ def get_state(ctx, ec2_client, **kwargs):
     server = get_server_by_context(ec2_client, ctx)
     server_state = _get_instance_status(ec2_client, server)
     if server_state[0]['Status'] is "running":
-        IP = []
-        IP.append(server_state[0]['Public IP'])
-        ctx['ip'].append(IP)
+        ctx['ip'] = server_state[0]['Public IP'])
         # The ip of this instance in the management network
         ctx.logger.info("Instance id").format(str(server_state[0]['Public IP']))
         return True
